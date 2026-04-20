@@ -1,1 +1,52 @@
 # JOB_SEARCH_Code
+
+## Location targeting rules
+
+Primary targets:
+1. Jacksonville, Florida
+2. Remote jobs
+
+Secondary targets:
+3. Hybrid jobs tied to Jacksonville / Northeast Florida
+4. Nearby Jacksonville metro area jobs (Ponte Vedra, Orange Park, St. Augustine, Fernandina Beach, Atlantic Beach, Neptune Beach, Jacksonville Beach)
+
+## Strict behavior
+
+- Prioritize Jacksonville on-site or Jacksonville hybrid roles.
+- Include fully remote roles.
+- Include hybrid roles only when Jacksonville or nearby metro tied.
+- Exclude non-remote roles outside Florida.
+- Exclude relocation-only roles outside Florida unless remote.
+- Reject roles with `Data Entry` in the title.
+- Reject remote roles that explicitly exclude Florida residents.
+
+## Ranking priority
+
+1. Jacksonville on-site or Jacksonville hybrid
+2. Remote jobs open nationally or to Florida
+3. Nearby Jacksonville metro
+4. Other Florida jobs only when manually approved as exceptional
+
+## UI quick filters
+
+- Jacksonville Only
+- Remote Only
+- Jacksonville + Remote
+- Hybrid Only
+- Nearby Metro
+- All Qualified
+
+## Default home behavior
+
+On app open, show only Jacksonville + Remote jobs.
+
+## Database schema
+
+The jobs table includes:
+- `city`
+- `state`
+- `remote_type`
+- `location_raw`
+- `geo_priority_score`
+
+See `job_search/schema.sql` and `job_search/scope.py` for implementation.
