@@ -50,6 +50,24 @@ def _sample_jobs() -> list[dict[str, str | Job]]:
     ]
 
 
+def _target_company_connections() -> list[dict[str, str]]:
+    return [
+        {"company": "FIS", "url": "https://careers.fisglobal.com/"},
+        {"company": "Citi", "url": "https://jobs.citi.com/"},
+        {"company": "Fanatics", "url": "https://www.fanaticsinc.com/careers"},
+        {"company": "Florida Blue", "url": "https://careers.floridablue.com/"},
+        {"company": "Bank of America", "url": "https://careers.bankofamerica.com/"},
+        {"company": "Deutsche Bank", "url": "https://careers.db.com/"},
+        {"company": "CSX", "url": "https://www.csx.com/index.cfm/working-at-csx/"},
+        {"company": "Mayo Clinic", "url": "https://jobs.mayoclinic.org/"},
+        {"company": "Deloitte", "url": "https://www2.deloitte.com/us/en/careers.html"},
+        {
+            "company": "Intercontinental Exchange",
+            "url": "https://www.ice.com/careers",
+        },
+    ]
+
+
 def _render_homepage() -> bytes:
     jobs_with_meta = _sample_jobs()
     homepage_jobs = default_homepage_filter([entry["job"] for entry in jobs_with_meta])
@@ -76,6 +94,13 @@ def _render_homepage() -> bytes:
 
     cards_html = "\n".join(cards) if cards else "<p>No qualified jobs yet.</p>"
     source_options = "\n".join(f"<li>{escape(name)}</li>" for name in source_names)
+    company_connections = "\n".join(
+        (
+            f'<li><a href="{escape(item["url"])}" target="_blank" '
+            f'rel="noopener noreferrer">{escape(item["company"])}</a></li>'
+        )
+        for item in _target_company_connections()
+    )
     html = f"""<!doctype html>
 <html lang="en">
 <head>
@@ -116,6 +141,13 @@ def _render_homepage() -> bytes:
       <summary>Sources pulled for these jobs</summary>
       <ul>
         {source_options}
+      </ul>
+    </details>
+
+    <details open>
+      <summary>Target company hiring page connections</summary>
+      <ul>
+        {company_connections}
       </ul>
     </details>
 
