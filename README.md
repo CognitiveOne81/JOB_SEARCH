@@ -50,3 +50,27 @@ The jobs table includes:
 - `geo_priority_score`
 
 See `job_search/schema.sql` and `job_search/scope.py` for implementation.
+
+## Railway deployment notes
+
+This repository already includes a root-level `start.sh` script that starts the web process:
+
+```bash
+./start.sh
+```
+
+If Railway still reports "Missing start.sh", the service is usually building from the wrong root directory or an older commit.
+
+Checklist:
+
+1. **Deploy latest commit** that includes `start.sh` at repository root.
+2. **Set the Railway service root directory** to the repo root (`/`) rather than `job_search/`.
+3. **Set a custom start command** in Railway service settings as fallback:
+   ```bash
+   ./start.sh
+   ```
+   or
+   ```bash
+   python -m job_search.app
+   ```
+4. Ensure `start.sh` has executable permissions (`chmod +x start.sh`) and uses LF line endings.
