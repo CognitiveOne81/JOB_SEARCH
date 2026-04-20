@@ -2,52 +2,73 @@ from __future__ import annotations
 
 import json
 import os
+import sqlite3
 from html import escape
+from pathlib import Path
+from typing import Any
 from wsgiref.simple_server import make_server
 
 from job_search.scope import Job, default_homepage_filter, evaluate_job
 
 
-def _sample_jobs() -> list[dict[str, str | Job]]:
-    return [
-        {
-            "job": Job(
-                title="Senior Data Analyst",
-                description="Build AI-enabled KPI dashboards for sales operations.",
-                location_raw="Jacksonville, FL",
-            ),
-            "url": "https://jobs.example.com/senior-data-analyst-jax",
-            "source": "LinkedIn",
-        },
-        {
-            "job": Job(
-                title="Business Intelligence Analyst",
-                description="Own BI reporting, SQL pipelines, and stakeholder reporting.",
-                location_raw="Remote - United States",
-            ),
-            "url": "https://jobs.example.com/business-intelligence-analyst-remote",
-            "source": "Indeed",
-        },
-        {
-            "job": Job(
-                title="Data Analyst (Hybrid)",
-                description="Create executive dashboards and support analytics initiatives.",
-                location_raw="Jacksonville / Hybrid",
-                remote_type="hybrid",
-            ),
-            "url": "https://jobs.example.com/data-analyst-hybrid-jax",
-            "source": "Built In",
-        },
-        {
-            "job": Job(
-                title="Data Analyst",
-                description="Remote role, not open to Florida.",
-                location_raw="Remote - US",
-            ),
-            "url": "https://jobs.example.com/data-analyst-remote-us",
-            "source": "Dice",
-        },
-    ]
+_DB_ENV_VAR = "JOB_SEARCH_DB_PATH"
+_DEFAULT_DB_FILENAME = "job_search.db"
+
+
+def _db_path() -> str:
+    configured = os.environ.get(_DB_ENV_VAR)
+    if configured:
+        return configured
+    return str(Path(__file__).resolve().parent.parent / _DEFAULT_DB_FILENAME)
+
+
+def _schema_sql() -> str:
+    schema_path = Path(__file__).with_name("schema.sql")
+    return schema_path.read_text(encoding="utf-8")
+
+
+def _get_connection() -> sqlite3.Connection:
+    conn = sqlite3.connect(_db_path())
+    conn.row_factory = sqlite3.Row
+    return conn
+
+
+def _init_db() -> None:
+    with _get_connection() as conn:
+        conn.executescript(_schema_sql())
+
+
+def _row_to_job(row: sqlite3.Row) -> Job:
+    return Job(
+        title=str(row["title"] or ""),
+        description=str(row["description"] or ""),
+        city=str(row["city"] or ""),
+        state=str(row["state"] or ""),
+        remote_type=str(row["remote_type"] or ""),
+        location_raw=str(row["location_raw"] or ""),
+    )
+
+
+def _fetch_jobs() -> list[dict[str, str | Job]]:
+    with _get_connection() as conn:
+        rows = conn.execute(
+            """
+            SELECT title, description, city, state, remote_type, location_raw, source, url
+            FROM jobs
+            ORDER BY datetime(created_at) DESC, id DESC
+            """
+        ).fetchall()
+
+    output: list[dict[str, str | Job]] = []
+    for row in rows:
+        output.append(
+            {
+                "job": _row_to_job(row),
+                "url": str(row["url"] or ""),
+                "source": str(row["source"] or "Unknown"),
+            }
+        )
+    return output
 
 
 def _target_company_connections() -> list[dict[str, str]]:
@@ -69,7 +90,7 @@ def _target_company_connections() -> list[dict[str, str]]:
 
 
 def _render_homepage() -> bytes:
-    jobs_with_meta = _sample_jobs()
+    jobs_with_meta = _fetch_jobs()
     homepage_jobs = default_homepage_filter([entry["job"] for entry in jobs_with_meta])
     filtered = [item for item in jobs_with_meta if item["job"] in homepage_jobs]
 
@@ -78,10 +99,18 @@ def _render_homepage() -> bytes:
     for index, item in enumerate(filtered):
         job = item["job"]
         result = evaluate_job(job)
+        url = str(item["url"])
+        title = escape(job.title)
+        if url:
+            title_html = (
+                f'<a href="{escape(url)}" target="_blank" rel="noopener noreferrer">{title}</a>'
+            )
+        else:
+            title_html = title
         cards.append(
             f"""
             <article class="card" data-job-card data-job-index="{index}">
-              <h3><a href="{escape(str(item['url']))}" target="_blank" rel="noopener noreferrer">{escape(job.title)}</a></h3>
+              <h3>{title_html}</h3>
               <p class="meta"><strong>Location:</strong> {escape(job.location_raw)} · <strong>Bucket:</strong> {escape(result.geo_bucket)} · <strong>Source:</strong> {escape(str(item['source']))}</p>
               <p>{escape(job.description)}</p>
               <div class="actions">
@@ -93,7 +122,7 @@ def _render_homepage() -> bytes:
         )
 
     cards_html = "\n".join(cards) if cards else "<p>No qualified jobs yet.</p>"
-    source_options = "\n".join(f"<li>{escape(name)}</li>" for name in source_names)
+    source_options = "\n".join(f"<li>{escape(name)}</li>" for name in source_names) or "<li>None yet</li>"
     company_connections = "\n".join(
         (
             f'<li><a href="{escape(item["url"])}" target="_blank" '
@@ -173,7 +202,7 @@ def _render_homepage() -> bytes:
       <p id="empty-applied">No applied jobs yet.</p>
     </section>
 
-    <p class="ok">Health endpoint available at <code>/health</code> and <code>/healthz</code>.</p>
+    <p class="ok">Health endpoint available at <code>/health</code> and <code>/healthz</code>. Ingestion endpoint: <code>POST /ingest</code>.</p>
   </main>
 
   <script>
@@ -217,10 +246,98 @@ def _render_homepage() -> bytes:
     return html.encode("utf-8")
 
 
-def app(environ, start_response):
-    path = environ.get("PATH_INFO", "/")
+def _read_json_body(environ: dict[str, Any]) -> Any:
+    raw_length = environ.get("CONTENT_LENGTH") or "0"
+    try:
+        length = int(raw_length)
+    except (TypeError, ValueError):
+        length = 0
 
-    if path == "/":
+    body = environ["wsgi.input"].read(length) if length > 0 else b""
+    if not body:
+        return None
+    return json.loads(body.decode("utf-8"))
+
+
+def _job_from_payload(payload: dict[str, Any]) -> Job:
+    return Job(
+        title=str(payload.get("title", "")),
+        description=str(payload.get("description", "")),
+        city=str(payload.get("city", "")),
+        state=str(payload.get("state", "")),
+        remote_type=str(payload.get("remote_type", "")),
+        location_raw=str(payload.get("location_raw", "")),
+        manually_approved=bool(payload.get("manually_approved", False)),
+    )
+
+
+def _insert_jobs(payload: Any) -> dict[str, Any]:
+    items = payload if isinstance(payload, list) else payload.get("jobs", [payload])
+    if not isinstance(items, list):
+        raise ValueError("Payload must be an object, list, or object with a jobs array")
+
+    inserted = 0
+    rejected: list[dict[str, str]] = []
+
+    with _get_connection() as conn:
+        for item in items:
+            if not isinstance(item, dict):
+                rejected.append({"title": "", "reason": "Invalid job payload"})
+                continue
+
+            job = _job_from_payload(item)
+            if not job.title or not job.description or not job.location_raw:
+                rejected.append({"title": job.title, "reason": "title, description, and location_raw are required"})
+                continue
+
+            result = evaluate_job(job)
+            if not result.qualified:
+                rejected.append({"title": job.title, "reason": result.reason})
+                continue
+
+            conn.execute(
+                """
+                INSERT INTO jobs (
+                    title, company, description, city, state, remote_type,
+                    location_raw, geo_priority_score, source, url
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    job.title,
+                    str(item.get("company", "")),
+                    job.description,
+                    job.city,
+                    job.state,
+                    job.remote_type,
+                    job.location_raw,
+                    result.geo_priority_score,
+                    str(item.get("source", "manual")),
+                    str(item.get("url", "")),
+                ),
+            )
+            inserted += 1
+
+    return {"inserted": inserted, "rejected": rejected}
+
+
+def _json_response(start_response, status: str, payload: dict[str, Any]):
+    body = json.dumps(payload).encode("utf-8")
+    start_response(
+        status,
+        [
+            ("Content-Type", "application/json"),
+            ("Content-Length", str(len(body))),
+        ],
+    )
+    return [body]
+
+
+def app(environ, start_response):
+    _init_db()
+    path = environ.get("PATH_INFO", "/")
+    method = environ.get("REQUEST_METHOD", "GET").upper()
+
+    if path == "/" and method == "GET":
         body = _render_homepage()
         start_response(
             "200 OK",
@@ -231,30 +348,41 @@ def app(environ, start_response):
         )
         return [body]
 
-    if path in {"/health", "/healthz"}:
-        payload = {
-            "status": "ok",
-            "service": "job-search",
-        }
-        body = json.dumps(payload).encode("utf-8")
-        start_response(
-            "200 OK",
-            [
-                ("Content-Type", "application/json"),
-                ("Content-Length", str(len(body))),
-            ],
-        )
-        return [body]
+    if path in {"/health", "/healthz"} and method == "GET":
+        return _json_response(start_response, "200 OK", {"status": "ok", "service": "job-search"})
 
-    body = json.dumps({"error": "not_found", "path": path}).encode("utf-8")
-    start_response(
-        "404 Not Found",
-        [
-            ("Content-Type", "application/json"),
-            ("Content-Length", str(len(body))),
-        ],
-    )
-    return [body]
+    if path == "/api/jobs" and method == "GET":
+        jobs = _fetch_jobs()
+        records = []
+        for item in jobs:
+            job = item["job"]
+            result = evaluate_job(job)
+            records.append(
+                {
+                    "title": job.title,
+                    "description": job.description,
+                    "location_raw": job.location_raw,
+                    "source": item["source"],
+                    "url": item["url"],
+                    "geo_bucket": result.geo_bucket,
+                    "qualified": result.qualified,
+                }
+            )
+        return _json_response(start_response, "200 OK", {"count": len(records), "jobs": records})
+
+    if path == "/ingest" and method == "POST":
+        try:
+            payload = _read_json_body(environ)
+            if payload is None:
+                return _json_response(start_response, "400 Bad Request", {"error": "Empty JSON payload"})
+            result = _insert_jobs(payload)
+            return _json_response(start_response, "200 OK", result)
+        except json.JSONDecodeError:
+            return _json_response(start_response, "400 Bad Request", {"error": "Invalid JSON payload"})
+        except ValueError as exc:
+            return _json_response(start_response, "400 Bad Request", {"error": str(exc)})
+
+    return _json_response(start_response, "404 Not Found", {"error": "not_found", "path": path})
 
 
 def main() -> None:

@@ -74,3 +74,23 @@ Checklist:
    python3 -m job_search.app
    ```
 4. Ensure `start.sh` has executable permissions (`chmod +x start.sh`) and uses LF line endings.
+
+## Job ingestion API
+
+This app now supports manual/API ingestion so qualified jobs can be loaded without scraping:
+
+- `POST /ingest` with JSON body for one job object, a list of jobs, or `{ "jobs": [...] }`.
+- `GET /api/jobs` to list stored jobs.
+
+Required fields per job: `title`, `description`, `location_raw`.
+Optional fields: `company`, `source`, `url`, `city`, `state`, `remote_type`, `manually_approved`.
+
+Example:
+
+```bash
+curl -X POST http://localhost:8080/ingest \
+  -H "Content-Type: application/json" \
+  -d '{"title":"Data Analyst","description":"BI dashboard role","location_raw":"Jacksonville, FL","source":"manual"}'
+```
+
+Set `JOB_SEARCH_DB_PATH` to control where SQLite data is stored.
