@@ -1,2 +1,2 @@
-# No third-party dependencies — standard library only.
+gunicorn
 # This file exists so Railpack detects the project as Python and provisions Python 3.
