@@ -71,6 +71,6 @@ Checklist:
    ```
    or
    ```bash
-   python -m job_search.app
+   python3 -m job_search.app
    ```
 4. Ensure `start.sh` has executable permissions (`chmod +x start.sh`) and uses LF line endings.
